@@ -1,5 +1,72 @@
 # @shopify/hydrogen
 
+## 2026.10.0-preview.4
+
+### Minor Changes
+
+- b202925: Add `getTrackingValues()` to analytics destination callback context. Destinations can read current `uniqueToken` and `visitToken` values from Shopify's consent API without accessing its internal globals. Each read requests fallback generation with the tag `hydrogen:<destination name>`; token generation is provided by the consent API when supported. Unavailable values are returned as empty strings, and the getter returns empty strings whenever analytics tracking is not currently allowed, even if a destination retained it and calls it after consent was revoked.
+  
+  ```ts
+  analytics.addDestination({
+    name: "my-destination",
+    setup({ subscribe }) {
+      subscribe("page_viewed", (payload, { getTrackingValues }) => {
+        const { uniqueToken, visitToken } = getTrackingValues();
+        // Forward the event and tokens to your destination.
+      });
+    },
+  });
+  ```
+- d75a710: Require an asynchronous `setup()` callback for `consent.mode: "custom-banner"` to connect third-party consent providers. Setup must synchronize the provider's consent through `window.Shopify.customerPrivacy` before resolving. Hydrogen buffers destination events until then, replays them when analytics consent is allowed, and discards them when denied. Setup failures keep delivery blocked.
+  
+  Migration from earlier previews: replace `consent={{mode: "custom-banner"}}` with `consent={{mode: "custom-banner", setup}}`. The callback is now required by TypeScript. JavaScript integrations without it log a warning during browser initialization and keep analytics delivery blocked.
+- 36902dd: **Breaking:** Remove the top-level `analytics.subscribe()` method. Register event consumers with `analytics.addDestination()` and use the `subscribe` function provided to its setup callback. All event consumers now receive consent-gated delivery and buffered replay.
+  
+  Register each destination once during browser app initialization, after ShopifyScripts has created the bus.
+  
+  ```ts
+  analytics.addDestination({
+    name: "my-destination",
+    setup({ subscribe }) {
+      subscribe("page_viewed", (payload, { getTrackingValues }) => {
+        // Send the event to your destination.
+      });
+    },
+  });
+  ```
+  
+  New destinations receive retained history when analytics consent allows, including events published while consent was already allowed. The buffer holds up to 500 events and is cleared when analytics consent is explicitly denied. Consumers migrating from the live-only API should account for this replay.
+  
+  The function returned by `addDestination()` removes the destination; each setup subscription also returns an unsubscribe function. Removing and re-adding a destination, even with the same name, replays retained history again and can duplicate deliveries. Keep registration outside component mount/unmount cycles.
+  
+  Also remove `analytics.destroy()`. Hydrogen owns the shared bus for the page's lifetime. Use the cleanup function returned by `addDestination()` when intentionally removing a destination.
+- c40b38e: `hydrogen setup` now works without a `package.json`. When run in a directory with no project, it prompts to either scaffold the React Router template from the `dist-preview` branch or install AI coding skills only. Existing behavior (install Hydrogen + sync skills) is preserved when a `package.json` is present.
+
+### Patch Changes
+
+- b202925: Apply private, no-store cache directives to any response containing `Set-Cookie`, including application-owned cookies, instead of checking specific Shopify cookie names. Remove conflicting CDN cache directives from these responses.
+- b2c7791: Fix product form store losing its cart subscription after React StrictMode effect replay in development. The store now exposes a `connect()` method that re-subscribes to the cart store, and `ProductProvider` calls it on every effect mount so the subscription survives StrictMode's mount → cleanup → remount cycle.
+- f368205: Reject JSONP `callback` requests before forwarding them through any Shopify proxy.
+- b202925: Stop creating and refreshing the deprecated JavaScript-visible `_shopify_y` and `_shopify_s` cookies from `ShopifyScripts`. Shopify's consent API and Storefront API manage visitor tracking state through the backend cookies.
+  
+  Forward incoming cookies unchanged so Shopify can resolve tracking state and migrate legacy identifiers. Stop converting legacy cookies into tracking headers or inferring tracking state from the presence of specific analytics cookies. The SFAPI proxy continues forwarding explicit token headers directly from the incoming request, without storing tokens in the request context.
+  
+  Expire existing legacy cookies on successful HTTP responses to consent-management requests, after forwarding them upstream. Cleanup covers host-only and parent-domain cookies, including after consent denial or revocation.
+- b202925: Visitor tokens are now read through Shopify's consent API instead of the `Server-Timing` header.
+- 38b8576: Fix `@shopify/hydrogen/ts-plugin` not loading in editors. tsserver resolves `compilerOptions.plugins` with TypeScript's legacy JS resolver, which ignores package `exports`, so the plugin was silently skipped and GraphQL hover docs and completions inside `gql()` documents were missing. The package now ships a `ts-plugin/package.json` that the legacy resolver can find. Type errors for invalid fields were unaffected since those come from `gql()` types, not the plugin.
+- 167a514: **Breaking:** Remove the standalone `CartProvider`, `useCart`, `useCartActions`, and `useCartForm` exports from `@shopify/hydrogen/react`. They dropped custom `CartFragment` types. Use the typed versions from `createCartComponents()` instead:
+  
+  ```ts
+  import { createCartComponents } from "@shopify/hydrogen/react";
+  
+  import type { cartHandlers } from "./cart-handlers";
+  
+  export const { CartProvider, useCart, useCartActions, useCartForm } =
+    createCartComponents<typeof cartHandlers>();
+  ```
+  
+  `useCartAnalytics` is still exported.
+
 ## 2026.10.0-preview.3
 
 ### Minor Changes
